@@ -1,0 +1,8 @@
+{
+  "name": "AI Agent Firewall",
+  "description": "Secure Autonomy. Enforce Every Boundary. Enterprise cybersecurity and governance platform monitoring AI agent actions, enforcing deterministic security policies, and managing human approvals.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
