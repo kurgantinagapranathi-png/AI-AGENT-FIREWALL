@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useFirewall } from '../context/FirewallContext';
 import { DEMO_SCENARIOS } from '../services/storage';
-import { ActionCategory, DecisionType, ScenarioDefinition, ActionRecord } from '../types/firewall';
+import { ActionCategory, ScenarioDefinition, ActionRecord } from '../types/firewall';
 import { DecisionBadge, ExecutionBadge } from '../components/common/Badge';
 import {
   Play,
@@ -13,35 +13,39 @@ import {
   ArrowRight,
   Sparkles,
   Info,
-  Layers,
   ExternalLink,
-  ChevronRight,
-  ShieldAlert,
   Sliders,
-  AlertTriangle
+  AlertTriangle,
+  RefreshCw,
+  Terminal,
+  RotateCcw,
+  Radio,
+  FileCode
 } from 'lucide-react';
 
 export const PlaygroundView: React.FC = () => {
   const {
     agents,
-    policies,
     runSecurityCheck,
     setCurrentView,
     setInspectedAction,
     todaySuccessfulRefunds,
     n8nStatus,
-    backendOnline
+    setBackendN8nUrl
   } = useFirewall();
 
-  // Active form state
-  const [selectedAgentId, setSelectedAgentId] = useState<string>('refund-agent-01');
-  const [actionType, setActionType] = useState<ActionCategory>('REFUND');
-  const [resource, setResource] = useState<string>('ORD-1024');
-  const [amount, setAmount] = useState<number>(500);
-  const [requestCount, setRequestCount] = useState<number>(50);
-  const [apiRate, setApiRate] = useState<number>(30);
-  const [targetService, setTargetService] = useState<string>('order_lookup_api');
-  const [description, setDescription] = useState<string>('Customer refund for order ORD-1024');
+  // Webhook URL configuration state
+  const [webhookMode, setWebhookMode] = useState<'test' | 'prod'>('test');
+  const testWebhookUrl = 'https://bhoomikorada9.app.n8n.cloud/webhook-test/pro-firewall';
+  const prodWebhookUrl = 'https://bhoomikorada9.app.n8n.cloud/webhook/pro-firewall';
+  const activeWebhookUrl = webhookMode === 'test' ? testWebhookUrl : prodWebhookUrl;
+
+  // Active form state (mapped to n8n request fields: agent_id, action, destination, amount_inr)
+  const [selectedAgentId, setSelectedAgentId] = useState<string>('finance-agent-01');
+  const [actionName, setActionName] = useState<string>('send_payment');
+  const [destination, setDestination] = useState<string>('unknown.example');
+  const [amountInr, setAmountInr] = useState<number>(80000);
+  const [description, setDescription] = useState<string>('Autonomous payment of ₹80,000 sent to unknown.example by finance-agent-01');
 
   // Active scenario metadata
   const [activeScenario, setActiveScenario] = useState<ScenarioDefinition | null>(DEMO_SCENARIOS[0]);
@@ -49,45 +53,78 @@ export const PlaygroundView: React.FC = () => {
   // Execution result state
   const [isEvaluating, setIsEvaluating] = useState<boolean>(false);
   const [lastEvaluatedAction, setLastEvaluatedAction] = useState<ActionRecord | null>(null);
+  const [evalTimer, setEvalTimer] = useState<number>(0);
 
   const selectedAgent = agents.find((a) => a.id === selectedAgentId) || agents[0];
+
+  // Quick preset: user example request
+  const handleLoadExample = () => {
+    setSelectedAgentId('finance-agent-01');
+    setActionName('send_payment');
+    setDestination('unknown.example');
+    setAmountInr(80000);
+    setDescription('Autonomous payment of ₹80,000 sent to unknown.example by finance-agent-01');
+    setActiveScenario(DEMO_SCENARIOS[0]);
+  };
 
   const handleSelectScenario = (scenario: ScenarioDefinition) => {
     setActiveScenario(scenario);
     setSelectedAgentId(scenario.agentId);
-    setActionType(scenario.actionType);
-    setResource(scenario.resource);
-    if (scenario.amount !== undefined) setAmount(scenario.amount);
-    if (scenario.requestCount !== undefined) setRequestCount(scenario.requestCount);
-    if (scenario.apiRate !== undefined) setApiRate(scenario.apiRate);
-    if (scenario.targetService) setTargetService(scenario.targetService);
+    if (scenario.id === 'scenario-n8n-live') {
+      setActionName('send_payment');
+      setDestination('unknown.example');
+      setAmountInr(80000);
+    } else {
+      setActionName(scenario.actionType === 'REFUND' ? 'send_payment' : scenario.actionType.toLowerCase());
+      setDestination(scenario.resource);
+      if (scenario.amount !== undefined) setAmountInr(scenario.amount);
+    }
     if (scenario.description) setDescription(scenario.description);
   };
 
-  const handleExecuteSecurityCheck = async () => {
+  const handleSwitchWebhookMode = async (mode: 'test' | 'prod') => {
+    setWebhookMode(mode);
+    const target = mode === 'test' ? testWebhookUrl : prodWebhookUrl;
+    await setBackendN8nUrl(target);
+  };
+
+  const handleExecuteSecurityCheck = async (forceLocal = false) => {
     if (isEvaluating) return;
 
     setIsEvaluating(true);
     setLastEvaluatedAction(null);
+    setEvalTimer(0);
+
+    const timer = setInterval(() => {
+      setEvalTimer((prev) => prev + 100);
+    }, 100);
 
     try {
-      // Simulate micro evaluation delay for realism
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      // Map to category
+      let category: ActionCategory = 'REFUND';
+      if (actionName.includes('tool') || actionName.includes('access')) category = 'TOOL_ACCESS';
+      else if (actionName.includes('email') || actionName.includes('mail')) category = 'EMAIL';
+      else if (actionName.includes('api')) category = 'API_CALL';
 
       const input = {
         agentId: selectedAgentId,
-        actionType,
-        resource,
-        amount: actionType === 'REFUND' ? amount : undefined,
-        requestCount: actionType === 'EMAIL' ? requestCount : undefined,
-        apiRate: actionType === 'API_CALL' ? apiRate : undefined,
-        targetService: actionType === 'TOOL_ACCESS' ? targetService : undefined,
-        description
+        actionType: category,
+        resource: destination,
+        amount: amountInr,
+        description,
+        // Exact n8n integration fields
+        agent_id: selectedAgentId,
+        action: actionName,
+        destination,
+        amount_inr: amountInr,
+        mode: forceLocal ? ('local_demo' as const) : undefined,
+        webhookUrl: activeWebhookUrl
       };
 
       const result = await runSecurityCheck(input);
       setLastEvaluatedAction(result);
     } finally {
+      clearInterval(timer);
       setIsEvaluating(false);
     }
   };
@@ -99,46 +136,47 @@ export const PlaygroundView: React.FC = () => {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xs font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 uppercase tracking-wider">
-              Interactive Sandbox
+              Autonomous Governance
             </span>
             <span className="text-xs text-slate-400">·</span>
-            <span className="text-xs text-slate-500 font-medium">Deterministic Rule Evaluation</span>
+            <span className="text-xs text-slate-500 font-medium">n8n Security Gateway</span>
           </div>
           <h2 className="text-lg font-bold text-slate-900">
-            Simulate Autonomous AI Agent Request
+            AI Agent Request Dispatcher & Policy Firewall
           </h2>
           <p className="text-xs text-slate-500">
-            Sends proposed action to configurable backend API endpoint (<code className="text-slate-800 font-mono">POST /api/evaluate</code>) connected to n8n webhook.
+            Evaluates proposed autonomous agent actions against security boundaries and dispatches payload to your n8n workflow.
           </p>
+
+          {/* Active Webhook Status Strip */}
           <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-slate-100 text-xs">
-            <span className="text-slate-500 font-medium">Backend API:</span>
-            <span className="font-mono text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-              Online (Express)
+            <span className="text-slate-500 font-medium">Target Webhook:</span>
+            <code className="font-mono text-[11px] font-semibold text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 max-w-xs truncate">
+              {activeWebhookUrl}
+            </code>
+            <span className={`inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded border text-[11px] ${
+              webhookMode === 'test'
+                ? 'text-amber-800 bg-amber-50 border-amber-200'
+                : 'text-emerald-800 bg-emerald-50 border-emerald-200'
+            }`}>
+              <Radio className="w-3 h-3" />
+              {webhookMode === 'test' ? 'TEST Webhook (Canvas Listen)' : 'PRODUCTION Webhook'}
             </span>
-            <span className="text-slate-300">·</span>
-            <span className="text-slate-500 font-medium">n8n Gateway:</span>
-            {n8nStatus === 'Connected' ? (
-              <span className="inline-flex items-center gap-1 font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-[11px]">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
-                Connected
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 text-[11px]">
-                n8n not connected
-              </span>
-            )}
             <button
-              onClick={() => setCurrentView('integrations')}
-              className="text-blue-600 hover:underline text-[11px] font-medium ml-1"
+              onClick={() => handleSwitchWebhookMode(webhookMode === 'test' ? 'prod' : 'test')}
+              className="text-blue-600 hover:text-blue-800 font-semibold text-[11px] underline ml-1 cursor-pointer"
             >
-              Configure n8n Webhook →
+              Switch to {webhookMode === 'test' ? 'Production URL' : 'Test URL'}
             </button>
           </div>
         </div>
 
         {/* Selected Agent Overview Card */}
         <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-blue-600 text-white font-bold flex items-center justify-center flex-shrink-0">
+          <div
+            className="w-9 h-9 rounded-lg font-bold flex items-center justify-center flex-shrink-0 text-white"
+            style={{ backgroundColor: selectedAgent.avatarColor || '#2563EB' }}
+          >
             {selectedAgent.name.charAt(0)}
           </div>
           <div>
@@ -155,24 +193,46 @@ export const PlaygroundView: React.FC = () => {
         </div>
       </div>
 
-      {/* Scenario Selection Grid (6 Quick Scenario Buttons A-F) */}
+      {/* Test Webhook Notice Banner */}
+      <div className="bg-amber-50/80 border border-amber-200/80 rounded-xl p-3.5 text-xs text-amber-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs">
+        <div className="flex items-center gap-2.5">
+          <AlertTriangle className="w-4 h-4 text-amber-700 flex-shrink-0" />
+          <div>
+            <span className="font-bold">n8n Test Webhook Integration Notice:</span>{' '}
+            <span className="text-amber-800">
+              When using <code className="bg-amber-100 px-1 rounded font-mono text-[11px]">/webhook-test/pro-firewall</code>,
+              click <strong>"Execute workflow"</strong> in your n8n canvas before triggering the request.
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={handleLoadExample}
+            className="px-2.5 py-1 text-[11px] font-bold bg-white text-slate-800 border border-amber-300 rounded hover:bg-amber-100/50 transition-colors shadow-2xs"
+          >
+            Load Example (finance-agent-01)
+          </button>
+        </div>
+      </div>
+
+      {/* Scenario Selection Grid */}
       <div>
         <div className="flex items-center justify-between mb-2.5">
           <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-            Pre-Configured Test Scenarios (Judges' Quick-Test Suite)
+            Quick Scenarios & Pre-Configured Test Requests
           </h3>
           <span className="text-xs text-blue-600 font-medium">
-            Click any scenario to auto-populate
+            Click to auto-populate request payload
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {DEMO_SCENARIOS.map((sc) => {
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+          {DEMO_SCENARIOS.slice(0, 4).map((sc) => {
             const isSelected = activeScenario?.id === sc.id;
             let badgeBg = 'bg-emerald-50 text-emerald-800 border-emerald-200';
             if (sc.expectedDecision === 'BLOCK') {
               badgeBg = 'bg-rose-50 text-rose-800 border-rose-200';
-            } else if (sc.expectedDecision === 'REQUIRES_APPROVAL') {
+            } else if (sc.expectedDecision === 'REQUIRES_APPROVAL' || sc.expectedDecision === 'REVIEW') {
               badgeBg = 'bg-amber-50 text-amber-900 border-amber-200';
             }
 
@@ -188,14 +248,14 @@ export const PlaygroundView: React.FC = () => {
               >
                 <div className="flex items-start justify-between gap-2 mb-1.5">
                   <div className="flex items-center gap-1.5">
-                    <span className="w-5 h-5 rounded bg-slate-900 text-white font-mono text-[11px] font-bold flex items-center justify-center">
+                    <span className="w-5 h-5 rounded bg-slate-900 text-white font-mono text-[11px] font-bold flex items-center justify-center flex-shrink-0">
                       {sc.scenarioLetter}
                     </span>
                     <span className="text-xs font-bold text-slate-900 leading-tight">
                       {sc.title.split('—')[1] || sc.title}
                     </span>
                   </div>
-                  <span className={`text-[9px] font-mono font-bold px-1.5 py-0.2 rounded border uppercase tracking-wider ${badgeBg}`}>
+                  <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider ${badgeBg}`}>
                     {sc.expectedDecision}
                   </span>
                 </div>
@@ -220,155 +280,110 @@ export const PlaygroundView: React.FC = () => {
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
               <Sliders className="w-4 h-4 text-blue-600" />
-              Proposed Action Parameters
+              Agent Action Request Form
             </h3>
             <span className="text-xs text-slate-400 font-mono">
-              Live Inspector
+              HTTP POST JSON Payload
             </span>
           </div>
 
-          {/* Agent Selector */}
+          {/* Quick Example Load Button */}
+          <div className="p-2.5 bg-blue-50/50 rounded-lg border border-blue-200/60 flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2 text-slate-700">
+              <Sparkles className="w-4 h-4 text-blue-600" />
+              <span>User Test Spec Example:</span>
+            </div>
+            <button
+              onClick={handleLoadExample}
+              className="text-xs font-bold text-blue-700 hover:text-blue-900 hover:underline"
+            >
+              Fill: finance-agent-01 (₹80,000) →
+            </button>
+          </div>
+
+          {/* Field 1: agent_id */}
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Select Autonomous Agent
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-semibold text-slate-800">
+                Agent ID (<code className="text-blue-600 font-mono font-bold">agent_id</code>)
+              </label>
+              <span className="text-[10px] text-slate-400 font-mono">Required string</span>
+            </div>
             <select
               value={selectedAgentId}
               onChange={(e) => setSelectedAgentId(e.target.value)}
-              className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
+              className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-slate-900 font-mono font-semibold focus:outline-none focus:border-blue-500"
             >
               {agents.map((ag) => (
                 <option key={ag.id} value={ag.id}>
-                  {ag.name} ({ag.role})
+                  {ag.id} ({ag.name})
                 </option>
               ))}
             </select>
           </div>
 
-          {/* Action Type */}
+          {/* Field 2: action */}
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Action Category
-            </label>
-            <select
-              value={actionType}
-              onChange={(e) => setActionType(e.target.value as ActionCategory)}
-              className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
-            >
-              <option value="REFUND">Financial Refund (REFUND)</option>
-              <option value="TOOL_ACCESS">Tool / Service Invocation (TOOL_ACCESS)</option>
-              <option value="EMAIL">Email Dispatch (EMAIL)</option>
-              <option value="API_CALL">External API Call (API_CALL)</option>
-            </select>
-          </div>
-
-          {/* Target Resource */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Resource Identifier
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-semibold text-slate-800">
+                Action Name (<code className="text-blue-600 font-mono font-bold">action</code>)
+              </label>
+              <span className="text-[10px] text-slate-400 font-mono">e.g. send_payment</span>
+            </div>
             <input
               type="text"
-              value={resource}
-              onChange={(e) => setResource(e.target.value)}
-              placeholder="e.g. ORD-1024 or customer_ticket"
-              className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-slate-800 focus:outline-none focus:border-blue-500 font-mono"
+              value={actionName}
+              onChange={(e) => setActionName(e.target.value)}
+              placeholder="send_payment"
+              className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-slate-900 font-mono font-semibold focus:outline-none focus:border-blue-500"
             />
           </div>
 
-          {/* Conditional Inputs based on Action Category */}
-          {actionType === 'REFUND' && (
-            <div className="p-3 bg-blue-50/50 rounded-lg border border-blue-200/60 space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-slate-800">
-                  Refund Amount (₹ INR)
-                </label>
-                <span className="text-[11px] text-blue-700 font-medium">
-                  Autonomous threshold: ₹1,000
-                </span>
-              </div>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-500">
-                  ₹
-                </span>
-                <input
-                  type="number"
-                  min="1"
-                  value={amount}
-                  onChange={(e) => setAmount(Number(e.target.value))}
-                  className="w-full pl-8 pr-3 py-2 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-bold focus:outline-none focus:border-blue-500"
-                />
-              </div>
-              <div className="text-[11px] text-slate-500">
-                Today's prior executed refunds: <strong className="text-slate-800">₹{todaySuccessfulRefunds.toLocaleString('en-IN')}</strong> / ₹5,000 daily budget.
-              </div>
+          {/* Field 3: destination */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-semibold text-slate-800">
+                Destination (<code className="text-blue-600 font-mono font-bold">destination</code>)
+              </label>
+              <span className="text-[10px] text-slate-400 font-mono">e.g. unknown.example</span>
             </div>
-          )}
+            <input
+              type="text"
+              value={destination}
+              onChange={(e) => setDestination(e.target.value)}
+              placeholder="unknown.example"
+              className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-slate-900 font-mono font-semibold focus:outline-none focus:border-blue-500"
+            />
+          </div>
 
-          {actionType === 'EMAIL' && (
-            <div className="p-3 bg-amber-50/50 rounded-lg border border-amber-200/60 space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-slate-800">
-                  Recipient Batch Count
-                </label>
-                <span className="text-[11px] text-amber-800 font-medium">
-                  Hourly limit: 10 emails
-                </span>
-              </div>
+          {/* Field 4: amount_inr */}
+          <div className="p-3 bg-slate-50/70 rounded-lg border border-slate-200 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-slate-800">
+                Amount in INR (<code className="text-blue-600 font-mono font-bold">amount_inr</code>)
+              </label>
+              <span className="text-[11px] text-slate-500">
+                Threshold ceiling: ₹1,000
+              </span>
+            </div>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-500">
+                ₹
+              </span>
               <input
                 type="number"
-                min="1"
-                value={requestCount}
-                onChange={(e) => setRequestCount(Number(e.target.value))}
-                className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-bold focus:outline-none focus:border-blue-500"
+                min="0"
+                value={amountInr}
+                onChange={(e) => setAmountInr(Number(e.target.value))}
+                className="w-full pl-8 pr-3 py-2 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-bold font-mono focus:outline-none focus:border-blue-500"
               />
             </div>
-          )}
-
-          {actionType === 'API_CALL' && (
-            <div className="p-3 bg-indigo-50/50 rounded-lg border border-indigo-200/60 space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-slate-800">
-                  Invocation Velocity (req / min)
-                </label>
-                <span className="text-[11px] text-indigo-800 font-medium">
-                  Max rate limit: 20 req/min
-                </span>
-              </div>
-              <input
-                type="number"
-                min="1"
-                value={apiRate}
-                onChange={(e) => setApiRate(Number(e.target.value))}
-                className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-bold focus:outline-none focus:border-blue-500"
-              />
+            <div className="text-[11px] text-slate-500">
+              Formatted: <strong className="text-slate-900">₹{amountInr.toLocaleString('en-IN')}</strong> · Today's executed: ₹{todaySuccessfulRefunds.toLocaleString('en-IN')}
             </div>
-          )}
+          </div>
 
-          {actionType === 'TOOL_ACCESS' && (
-            <div className="p-3 bg-rose-50/50 rounded-lg border border-rose-200/60 space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-slate-800">
-                  Target Service / Tool Identifier
-                </label>
-                <span className="text-[11px] text-rose-800 font-medium">
-                  Whitelist enforced
-                </span>
-              </div>
-              <input
-                type="text"
-                value={targetService}
-                onChange={(e) => setTargetService(e.target.value)}
-                placeholder="e.g. order_lookup_api or aws_s3_admin_bucket"
-                className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-mono font-bold focus:outline-none focus:border-blue-500"
-              />
-              <div className="text-[10px] text-slate-500">
-                Agent whitelist: [{selectedAgent.allowedTools.join(', ')}]
-              </div>
-            </div>
-          )}
-
-          {/* Description */}
+          {/* Natural Language Intent Description */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
               Natural Language Intent Description
@@ -381,12 +396,28 @@ export const PlaygroundView: React.FC = () => {
             />
           </div>
 
-          {/* Action Trigger Button */}
-          <div className="pt-2">
+          {/* Preview JSON Payload */}
+          <div className="p-3 bg-slate-900 rounded-lg text-emerald-400 font-mono text-[11px] space-y-1 overflow-x-auto">
+            <div className="text-[10px] text-slate-400 uppercase tracking-wider flex items-center justify-between">
+              <span>POST JSON Body:</span>
+              <span className="text-slate-500 font-mono">{activeWebhookUrl.split('/').slice(-2).join('/')}</span>
+            </div>
+            <pre>
+{JSON.stringify({
+  agent_id: selectedAgentId,
+  action: actionName,
+  destination: destination,
+  amount_inr: amountInr
+}, null, 2)}
+            </pre>
+          </div>
+
+          {/* Action Trigger Buttons */}
+          <div className="pt-2 space-y-2">
             <button
-              onClick={handleExecuteSecurityCheck}
+              onClick={() => handleExecuteSecurityCheck(false)}
               disabled={isEvaluating}
-              className={`w-full py-3 px-4 rounded-xl text-xs font-bold text-white shadow-md transition-all flex items-center justify-center gap-2 ${
+              className={`w-full py-3 px-4 rounded-xl text-xs font-bold text-white shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer ${
                 isEvaluating
                   ? 'bg-slate-400 cursor-not-allowed'
                   : 'bg-blue-600 hover:bg-blue-700 active:scale-[0.99] shadow-blue-500/20'
@@ -395,14 +426,23 @@ export const PlaygroundView: React.FC = () => {
               {isEvaluating ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Evaluating Deterministic Security Policies...</span>
+                  <span>Connecting to n8n Webhook ({Math.floor(evalTimer / 1000)}s)...</span>
                 </>
               ) : (
                 <>
                   <Play className="w-4 h-4 fill-white" />
-                  <span>Run Security Check</span>
+                  <span>Send Request to n8n Webhook</span>
                 </>
               )}
+            </button>
+
+            <button
+              onClick={() => handleExecuteSecurityCheck(true)}
+              disabled={isEvaluating}
+              className="w-full py-2 px-3 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <FileCode className="w-3.5 h-3.5 text-slate-500" />
+              <span>Run Local Offline Policy Engine (Fallback Simulation)</span>
             </button>
           </div>
         </div>
@@ -416,12 +456,12 @@ export const PlaygroundView: React.FC = () => {
                 Firewall Policy Evaluation Result
               </h3>
               <span className="text-xs font-mono text-slate-500">
-                Policy Engine v1.4.2
+                {lastEvaluatedAction?.n8nConnected ? 'n8n Cloud Workflow' : 'Engine v1.4.2'}
               </span>
             </div>
 
             {/* Empty state before running check */}
-            {!lastEvaluatedAction && (
+            {!lastEvaluatedAction && !isEvaluating && (
               <div className="py-12 px-4 text-center">
                 <div className="w-12 h-12 rounded-xl bg-slate-100 text-slate-400 mx-auto flex items-center justify-center mb-3">
                   <Shield className="w-6 h-6" />
@@ -430,24 +470,81 @@ export const PlaygroundView: React.FC = () => {
                   Awaiting Security Evaluation
                 </h4>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
-                  Select a test scenario above or adjust the action parameters on the left, then click <strong>"Run Security Check"</strong>.
+                  Click <strong>"Send Request to n8n Webhook"</strong> to dispatch the payload and inspect the decision returned by n8n.
                 </p>
-                {activeScenario && (
-                  <div className="mt-4 inline-block text-left bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs max-w-md">
-                    <span className="font-bold text-slate-700">Currently Staged: </span>
-                    <span className="text-slate-600">{activeScenario.title}</span>
-                    <div className="text-[11px] text-blue-700 font-medium mt-1">
-                      Expected Decision: {activeScenario.expectedDecision}
-                    </div>
+                <div className="mt-4 inline-block text-left bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs max-w-md">
+                  <span className="font-bold text-slate-700">Payload to Send: </span>
+                  <div className="font-mono text-[11px] text-slate-600 mt-1">
+                    {`{ agent_id: "${selectedAgentId}", action: "${actionName}", destination: "${destination}", amount_inr: ${amountInr} }`}
                   </div>
-                )}
+                </div>
+              </div>
+            )}
+
+            {/* Loading state indicator */}
+            {isEvaluating && (
+              <div className="py-16 px-4 text-center space-y-3">
+                <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 mx-auto flex items-center justify-center animate-spin">
+                  <RefreshCw className="w-6 h-6" />
+                </div>
+                <h4 className="text-sm font-bold text-slate-900">
+                  Transmitting to n8n Webhook...
+                </h4>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                  Awaiting response from <code className="font-mono text-slate-700">{activeWebhookUrl}</code>. Analyzing risk boundaries and running Gemini AI policies.
+                </p>
               </div>
             )}
 
             {/* Active Result Card */}
-            {lastEvaluatedAction && (
+            {lastEvaluatedAction && !isEvaluating && (
               <div className="space-y-4 pt-3">
-                {/* Decision Banner */}
+                {/* Error Banner when n8n is offline or returned 404/non-200 */}
+                {lastEvaluatedAction.error && (
+                  <div className="p-4 rounded-xl border border-rose-300 bg-rose-50/80 space-y-2.5">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className="w-5 h-5 text-rose-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <h4 className="text-xs font-bold text-rose-900 uppercase tracking-wider">
+                          n8n Webhook Not Active or Returned Error
+                        </h4>
+                        <p className="text-xs text-rose-800 mt-0.5">
+                          {lastEvaluatedAction.error}
+                        </p>
+                        {lastEvaluatedAction.errorHint && (
+                          <div className="mt-2 p-2.5 bg-white/90 border border-rose-200 rounded-lg text-xs text-slate-800 font-mono">
+                            <span className="font-bold text-rose-900 block mb-0.5">n8n Test Execution Step:</span>
+                            {lastEvaluatedAction.errorHint}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-rose-200/60">
+                      <button
+                        onClick={() => handleExecuteSecurityCheck(false)}
+                        className="px-3 py-1.5 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-colors flex items-center gap-1 shadow-2xs cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Retry Webhook</span>
+                      </button>
+                      <button
+                        onClick={() => handleSwitchWebhookMode('prod')}
+                        className="px-3 py-1.5 text-xs font-semibold bg-white text-slate-800 border border-slate-300 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer"
+                      >
+                        Switch to Production Webhook
+                      </button>
+                      <button
+                        onClick={() => setInspectedAction(lastEvaluatedAction)}
+                        className="px-3 py-1.5 text-xs font-semibold text-blue-700 hover:underline cursor-pointer ml-auto"
+                      >
+                        View Raw Response Details →
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Decision Banner (ALLOW / REVIEW / BLOCK) */}
                 <div
                   className={`p-4 rounded-xl border ${
                     lastEvaluatedAction.decision === 'ALLOW'
@@ -471,12 +568,12 @@ export const PlaygroundView: React.FC = () => {
                       ) : (
                         <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
                           <AlertTriangle className="w-3.5 h-3.5 text-amber-700" />
-                          n8n not connected (Backend Engine Fallback)
+                          n8n not connected ({lastEvaluatedAction.source === 'local_demo' ? 'Local Sandbox' : 'Failed Call'})
                         </span>
                       )}
                     </div>
                     <span className="text-[10px] font-mono text-slate-500">
-                      {lastEvaluatedAction.n8nConnected ? 'Remote n8n Verdict' : 'Local Deterministic Ruling'}
+                      ID: {lastEvaluatedAction.id}
                     </span>
                   </div>
 
@@ -485,9 +582,17 @@ export const PlaygroundView: React.FC = () => {
                       <DecisionBadge decision={lastEvaluatedAction.decision} size="lg" />
                       <ExecutionBadge status={lastEvaluatedAction.executionStatus} />
                     </div>
-                    <span className="text-[11px] font-mono text-slate-500">
-                      ID: {lastEvaluatedAction.id}
-                    </span>
+                    {lastEvaluatedAction.riskScore !== undefined && (
+                      <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded border ${
+                        lastEvaluatedAction.riskScore >= 70
+                          ? 'bg-rose-100 text-rose-900 border-rose-300'
+                          : lastEvaluatedAction.riskScore >= 30
+                          ? 'bg-amber-100 text-amber-900 border-amber-300'
+                          : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                      }`}>
+                        Risk: {lastEvaluatedAction.riskScore} / 100
+                      </span>
+                    )}
                   </div>
 
                   {/* Decision Explanation */}
@@ -495,30 +600,80 @@ export const PlaygroundView: React.FC = () => {
                     {lastEvaluatedAction.reason}
                   </div>
 
-                  {/* Context note regarding execution status */}
+                  {/* Execution Simulation Note */}
                   <div className="mt-2 text-[11px] text-slate-600 border-t border-slate-200/60 pt-2">
                     {lastEvaluatedAction.decision === 'ALLOW' && (
                       <span className="text-emerald-800 font-medium">
-                        ✓ Execution Permitted: Action executed automatically in demo environment.
+                        ✓ Execution Permitted: Passed all security policies. Safe sandbox simulation completed.
                       </span>
                     )}
                     {lastEvaluatedAction.decision === 'BLOCK' && (
                       <span className="text-rose-800 font-medium">
-                        ✕ Execution Denied: Action blocked. Hard security incident logged.
+                        ✕ Execution Blocked: High security risk detected. No payment or external action executed.
                       </span>
                     )}
-                    {lastEvaluatedAction.decision === 'REQUIRES_APPROVAL' && (
+                    {(lastEvaluatedAction.decision === 'REVIEW' || lastEvaluatedAction.decision === 'REQUIRES_APPROVAL') && (
                       <span className="text-amber-900 font-medium">
-                        ⏸ Action Halted: Dispatched to Approval Queue. Action will NOT execute until authorized.
+                        ⏸ Action Halted: Requires human authorization. Dispatched to the Approval Center.
                       </span>
                     )}
                   </div>
                 </div>
 
-                {/* Step-by-step Policy Trace */}
+                {/* Risk Score Progress Meter if available */}
+                {lastEvaluatedAction.riskScore !== undefined && (
+                  <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs space-y-1.5">
+                    <div className="flex items-center justify-between text-slate-700">
+                      <span className="font-semibold">Security Threat Score:</span>
+                      <span className="font-mono font-bold text-slate-900">{lastEvaluatedAction.riskScore} / 100</span>
+                    </div>
+                    <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${
+                          lastEvaluatedAction.riskScore >= 70
+                            ? 'bg-rose-600'
+                            : lastEvaluatedAction.riskScore >= 30
+                            ? 'bg-amber-500'
+                            : 'bg-emerald-600'
+                        }`}
+                        style={{ width: `${Math.min(100, lastEvaluatedAction.riskScore)}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Security Reasons list if provided by n8n */}
+                {lastEvaluatedAction.securityReasons && lastEvaluatedAction.securityReasons.length > 0 && (
+                  <div className="p-3.5 bg-slate-50 rounded-lg border border-slate-200 text-xs space-y-1.5">
+                    <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                      <Shield className="w-3.5 h-3.5 text-blue-600" />
+                      Security Policy Violations & Guardrails
+                    </div>
+                    <ul className="list-disc pl-4 space-y-1 text-slate-700">
+                      {lastEvaluatedAction.securityReasons.map((reason, i) => (
+                        <li key={i}>{reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Gemini AI Analysis if provided */}
+                {lastEvaluatedAction.geminiAnalysis && (
+                  <div className="p-3.5 bg-blue-50/60 rounded-lg border border-blue-200/80 text-xs space-y-1.5">
+                    <div className="font-bold text-blue-900 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                      Gemini AI Security Analysis
+                    </div>
+                    <p className="text-slate-800 whitespace-pre-wrap leading-relaxed">
+                      {lastEvaluatedAction.geminiAnalysis}
+                    </p>
+                  </div>
+                )}
+
+                {/* Policy Trace Steps */}
                 <div>
                   <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-2">
-                    Policy Evaluation Trace ({lastEvaluatedAction.evaluationSteps.length} Rules Checked)
+                    Policy Evaluation Trace ({lastEvaluatedAction.evaluationSteps.length} Checks)
                   </h4>
                   <div className="space-y-2">
                     {lastEvaluatedAction.evaluationSteps.map((step, idx) => (
@@ -552,12 +707,12 @@ export const PlaygroundView: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Quick Next-Step Action button */}
+                {/* Quick Next-Step Action buttons */}
                 <div className="pt-2 flex flex-wrap gap-2">
-                  {lastEvaluatedAction.decision === 'REQUIRES_APPROVAL' && (
+                  {(lastEvaluatedAction.decision === 'REQUIRES_APPROVAL' || lastEvaluatedAction.decision === 'REVIEW') && (
                     <button
                       onClick={() => setCurrentView('approvals')}
-                      className="px-3 py-2 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition-colors flex items-center gap-1.5 shadow-xs"
+                      className="px-3 py-2 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
                     >
                       <span>Open Approval Center</span>
                       <ArrowRight className="w-3.5 h-3.5" />
@@ -566,7 +721,7 @@ export const PlaygroundView: React.FC = () => {
                   {lastEvaluatedAction.decision === 'BLOCK' && (
                     <button
                       onClick={() => setCurrentView('incidents')}
-                      className="px-3 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-colors flex items-center gap-1.5 shadow-xs"
+                      className="px-3 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
                     >
                       <span>Inspect Security Incidents</span>
                       <ArrowRight className="w-3.5 h-3.5" />
@@ -574,7 +729,7 @@ export const PlaygroundView: React.FC = () => {
                   )}
                   <button
                     onClick={() => setInspectedAction(lastEvaluatedAction)}
-                    className="px-3 py-2 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors"
+                    className="px-3 py-2 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors cursor-pointer"
                   >
                     View Full JSON Audit
                   </button>

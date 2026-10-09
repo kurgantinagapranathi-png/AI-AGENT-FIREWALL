@@ -14,7 +14,7 @@ app.use(express.json());
 
 // In-memory backend configuration for n8n integration
 let backendConfig = {
-  n8nWebhookUrl: process.env.N8N_WEBHOOK_URL || process.env.VITE_N8N_WEBHOOK_URL || '',
+  n8nWebhookUrl: process.env.N8N_WEBHOOK_URL || process.env.VITE_N8N_WEBHOOK_URL || 'https://bhoomikorada9.app.n8n.cloud/webhook-test/pro-firewall',
   mode: 'DEMO' as const,
   lastTested: null as string | null,
   lastStatus: 'DISCONNECTED' as 'CONNECTED' | 'DISCONNECTED' | 'FAILED'
@@ -220,9 +220,9 @@ app.post('/api/config', (req: Request, res: Response) => {
 
 // Test Connection directly from backend to n8n Webhook
 app.post('/api/test-n8n', async (req: Request, res: Response) => {
-  const targetUrl = req.body.webhookUrl || backendConfig.n8nWebhookUrl;
+  const targetUrl = (req.body.webhookUrl || backendConfig.n8nWebhookUrl || '').trim();
 
-  if (!targetUrl || targetUrl.trim() === '') {
+  if (!targetUrl) {
     return res.json({
       connected: false,
       n8nStatus: 'n8n not connected',
@@ -232,12 +232,14 @@ app.post('/api/test-n8n', async (req: Request, res: Response) => {
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4500);
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
 
     const pingPayload = {
       event: 'FIREWALL_PING_PROBE',
-      app: 'AI Agent Firewall Backend',
-      environment: 'DEMO',
+      agent_id: 'finance-agent-01',
+      action: 'ping_test',
+      destination: 'test.example',
+      amount_inr: 0,
       timestamp: new Date().toISOString()
     };
 
@@ -245,13 +247,21 @@ app.post('/api/test-n8n', async (req: Request, res: Response) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'User-Agent': 'AIAgentFirewall/1.4.2'
+        'User-Agent': 'AIAgentFirewall/2.0'
       },
       body: JSON.stringify(pingPayload),
       signal: controller.signal
     });
 
     clearTimeout(timeoutId);
+
+    const text = await upstreamResponse.text();
+    let data: any = {};
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { message: text };
+    }
 
     if (upstreamResponse.ok || upstreamResponse.status === 200) {
       backendConfig.lastTested = new Date().toISOString();
@@ -260,7 +270,8 @@ app.post('/api/test-n8n', async (req: Request, res: Response) => {
         connected: true,
         n8nStatus: 'Connected',
         statusCode: upstreamResponse.status,
-        message: `Connected successfully to n8n webhook (HTTP ${upstreamResponse.status}).`
+        message: `Connected successfully to n8n webhook (HTTP ${upstreamResponse.status}).`,
+        rawResponse: data
       });
     } else {
       backendConfig.lastTested = new Date().toISOString();
@@ -269,7 +280,11 @@ app.post('/api/test-n8n', async (req: Request, res: Response) => {
         connected: false,
         n8nStatus: 'n8n not connected',
         statusCode: upstreamResponse.status,
-        message: `n8n not connected: Upstream webhook returned HTTP ${upstreamResponse.status}.`
+        message: data.message || `Upstream webhook returned HTTP ${upstreamResponse.status}.`,
+        hint: data.hint || (upstreamResponse.status === 404
+          ? "In test mode, click the 'Execute workflow' button on the canvas in n8n, then try again."
+          : undefined),
+        rawResponse: data
       });
     }
   } catch (error: any) {
@@ -277,43 +292,65 @@ app.post('/api/test-n8n', async (req: Request, res: Response) => {
     backendConfig.lastStatus = 'FAILED';
     const isTimeout = error.name === 'AbortError';
     const msg = isTimeout
-      ? 'n8n not connected: Webhook request timed out after 4.5s.'
+      ? 'n8n not connected: Webhook request timed out after 5s.'
       : `n8n not connected: ${error.message || 'Network unreachable'}`;
     return res.json({
       connected: false,
       n8nStatus: 'n8n not connected',
-      message: msg
+      message: msg,
+      hint: 'Ensure n8n cloud instance is reachable.'
     });
   }
 });
 
 // Primary Endpoint: Evaluate Action via Backend API & n8n
 app.post('/api/evaluate', async (req: Request, res: Response) => {
-  const body: EvaluateRequestBody = req.body;
+  const body = req.body;
   const actionId = `act-${Date.now().toString().slice(-6)}`;
   const timestamp = new Date().toISOString();
 
-  const webhookUrl = backendConfig.n8nWebhookUrl;
+  const webhookUrl = (body.webhookUrl || backendConfig.n8nWebhookUrl || '').trim();
 
-  // Case 1: n8n webhook is configured -> Attempt upstream connection
-  if (webhookUrl && webhookUrl.trim() !== '') {
+  // If client explicitly requests offline deterministic engine
+  if (body.mode === 'local_demo') {
+    const localEval = runBackendDeterministicEvaluation(body);
+    return res.json({
+      success: true,
+      n8nConnected: false,
+      n8nStatus: 'Local Sandbox Engine',
+      source: 'backend_deterministic_fallback',
+      actionId,
+      decision: localEval.decision,
+      reason: localEval.reason,
+      evaluationSteps: localEval.steps,
+      timestamp,
+      rawN8nResponse: null
+    });
+  }
+
+  // Attempt upstream connection to n8n Webhook
+  if (webhookUrl) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+      const agent_id = body.agent_id || body.agentId || 'finance-agent-01';
+      const action = body.action || body.actionType || 'send_payment';
+      const destination = body.destination || body.resource || body.targetService || 'unknown.example';
+      const amount_inr = Number(body.amount_inr ?? body.amount ?? 0);
 
       const n8nPayload = {
+        agent_id,
+        action,
+        destination,
+        amount_inr,
+        agentId: agent_id,
+        actionType: action,
+        resource: destination,
+        amount: amount_inr,
         actionId,
-        agentId: body.agentId,
-        agentName: body.agent?.name || body.agentId,
-        actionType: body.actionType,
-        resource: body.resource,
-        amount: body.amount,
-        requestCount: body.requestCount,
-        apiRate: body.apiRate,
-        targetService: body.targetService,
-        description: body.description,
-        todaySuccessfulRefunds: body.todaySuccessfulRefunds || 0,
-        environment: 'DEMO',
+        description: body.description || `Autonomous ${action} to ${destination}`,
+        environment: 'TEST',
         timestamp
       };
 
@@ -321,7 +358,7 @@ app.post('/api/evaluate', async (req: Request, res: Response) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'User-Agent': 'AIAgentFirewall-Backend/1.4'
+          'User-Agent': 'AIAgentFirewall/2.0'
         },
         body: JSON.stringify(n8nPayload),
         signal: controller.signal
@@ -329,73 +366,153 @@ app.post('/api/evaluate', async (req: Request, res: Response) => {
 
       clearTimeout(timeoutId);
 
+      const responseText = await n8nResponse.text();
+      let n8nData: any = {};
+      try {
+        n8nData = JSON.parse(responseText);
+      } catch {
+        n8nData = { message: responseText };
+      }
+
       if (n8nResponse.ok) {
-        let n8nData: any = {};
-        try {
-          n8nData = await n8nResponse.json();
-        } catch {
-          // Response body was not JSON, but status was 200
-          n8nData = {};
+        const payload = Array.isArray(n8nData) ? n8nData[0] : (n8nData?.data || n8nData?.body || n8nData || {});
+
+        // Decision parsing: ALLOW, REVIEW, or BLOCK
+        let returnedDecision: 'ALLOW' | 'BLOCK' | 'REVIEW' = 'BLOCK';
+        const rawDecision = String(
+          payload.decision || payload.verdict || payload.status || payload.action || payload.result || ''
+        ).toUpperCase();
+
+        if (rawDecision.includes('ALLOW')) {
+          returnedDecision = 'ALLOW';
+        } else if (rawDecision.includes('BLOCK') || rawDecision.includes('DENY') || rawDecision.includes('REJECT')) {
+          returnedDecision = 'BLOCK';
+        } else if (rawDecision.includes('REVIEW') || rawDecision.includes('APPROV') || rawDecision.includes('HALT') || rawDecision.includes('PEND')) {
+          returnedDecision = 'REVIEW';
+        } else {
+          // If no explicit decision field, check risk score
+          const numericScore = typeof payload.risk_score === 'number' ? payload.risk_score : (typeof payload.riskScore === 'number' ? payload.riskScore : null);
+          if (numericScore !== null) {
+            returnedDecision = numericScore > 70 ? 'BLOCK' : (numericScore > 30 ? 'REVIEW' : 'ALLOW');
+          } else {
+            returnedDecision = 'REVIEW';
+          }
         }
 
-        // Validate decision returned by n8n
-        const validDecisions = ['ALLOW', 'BLOCK', 'REQUIRES_APPROVAL'];
-        const returnedDecision = n8nData.decision && validDecisions.includes(n8nData.decision.toUpperCase())
-          ? n8nData.decision.toUpperCase()
-          : null;
-
-        if (returnedDecision) {
-          backendConfig.lastStatus = 'CONNECTED';
-          return res.json({
-            success: true,
-            n8nConnected: true,
-            n8nStatus: 'Connected',
-            source: 'n8n_webhook',
-            actionId: n8nData.actionId || actionId,
-            decision: returnedDecision,
-            reason: n8nData.reason || `Decision enforced by connected n8n workflow for ${body.actionType}.`,
-            evaluationSteps: n8nData.evaluationSteps || [
-              {
-                policyId: 'N8N_WORKFLOW_VERDICT',
-                policyName: 'Upstream n8n Security Workflow',
-                passed: returnedDecision === 'ALLOW',
-                expected: 'n8n workflow authorization',
-                actual: `n8n returned ${returnedDecision}`,
-                reason: n8nData.reason || 'Decision evaluated remotely by connected n8n workflow.',
-                decision: returnedDecision
-              }
-            ],
-            timestamp,
-            rawN8nResponse: n8nData
-          });
+        // Parse risk score
+        const rawScore = payload.risk_score ?? payload.riskScore ?? payload.score ?? payload.risk;
+        let riskScore: number | undefined = undefined;
+        if (typeof rawScore === 'number') {
+          riskScore = rawScore <= 1 && rawScore > 0 ? Math.round(rawScore * 100) : Math.round(rawScore);
+        } else if (typeof rawScore === 'string') {
+          const parsed = parseFloat(rawScore);
+          if (!isNaN(parsed)) riskScore = parsed <= 1 && parsed > 0 ? Math.round(parsed * 100) : Math.round(parsed);
         }
+
+        // Parse security reasons
+        let securityReasons: string[] = [];
+        const rawReasons = payload.security_reasons || payload.securityReasons || payload.reasons || payload.reason || payload.explanation;
+        if (Array.isArray(rawReasons)) {
+          securityReasons = rawReasons.map((r: any) => String(r));
+        } else if (typeof rawReasons === 'string' && rawReasons.trim()) {
+          securityReasons = [rawReasons];
+        }
+
+        // Parse Gemini AI analysis
+        let geminiAnalysis: string | undefined = undefined;
+        const rawGemini = payload.gemini_analysis || payload.geminiAnalysis || payload.ai_analysis || payload.aiAnalysis || payload.analysis || payload.gemini;
+        if (typeof rawGemini === 'string') {
+          geminiAnalysis = rawGemini;
+        } else if (rawGemini && typeof rawGemini === 'object') {
+          geminiAnalysis = typeof rawGemini.text === 'string' ? rawGemini.text : JSON.stringify(rawGemini, null, 2);
+        }
+
+        const reason = payload.reason || payload.explanation || (securityReasons.length > 0 ? securityReasons.join('. ') : `n8n security workflow verdict: ${returnedDecision}`);
+
+        const evaluationSteps = payload.evaluationSteps || [
+          {
+            policyId: 'N8N_WORKFLOW_POLICY',
+            policyName: 'n8n Security Workflow & AI Guardrail',
+            passed: returnedDecision === 'ALLOW',
+            expected: 'Security validation pass',
+            actual: `Returned ${returnedDecision}${riskScore !== undefined ? ` (Risk Score: ${riskScore}/100)` : ''}`,
+            reason,
+            decision: returnedDecision === 'REVIEW' ? 'REQUIRES_APPROVAL' : returnedDecision
+          }
+        ];
+
+        backendConfig.lastStatus = 'CONNECTED';
+        return res.json({
+          success: true,
+          n8nConnected: true,
+          n8nStatus: 'Connected',
+          source: 'n8n_webhook',
+          actionId: payload.actionId || payload.action_id || actionId,
+          decision: returnedDecision,
+          reason,
+          riskScore,
+          securityReasons,
+          geminiAnalysis,
+          evaluationSteps,
+          timestamp,
+          rawN8nResponse: n8nData,
+          agent_id,
+          action,
+          destination,
+          amount_inr,
+          webhookUrl
+        });
+      } else {
+        // n8n returned a non-200 status code (e.g. 404, 500)
+        backendConfig.lastTested = new Date().toISOString();
+        backendConfig.lastStatus = 'FAILED';
+
+        return res.json({
+          success: false,
+          n8nConnected: false,
+          n8nStatus: 'n8n not connected',
+          statusCode: n8nResponse.status,
+          error: n8nData.message || `Upstream n8n webhook returned HTTP ${n8nResponse.status}`,
+          hint: n8nData.hint || (n8nResponse.status === 404
+            ? "In test mode, click the 'Execute workflow' button on the canvas in n8n, then try again. (In test mode, the webhook only works for one call after you click this button)"
+            : 'Ensure the n8n webhook node is active and configured to respond.'),
+          rawN8nResponse: n8nData,
+          actionId,
+          webhookUrl,
+          agent_id,
+          action,
+          destination,
+          amount_inr
+        });
       }
     } catch (err: any) {
-      // Downstream failure or timeout - do not claim it was successful!
-      console.warn('n8n upstream connection failed:', err.message);
+      backendConfig.lastTested = new Date().toISOString();
+      backendConfig.lastStatus = 'FAILED';
+      const isTimeout = err.name === 'AbortError';
+
+      return res.json({
+        success: false,
+        n8nConnected: false,
+        n8nStatus: 'n8n not connected',
+        statusCode: 0,
+        error: isTimeout ? 'Request timed out after 6 seconds while contacting n8n webhook.' : (err.message || 'Network unreachable'),
+        hint: 'Ensure your n8n cloud instance is online and the webhook endpoint is reachable.',
+        rawN8nResponse: null,
+        actionId,
+        webhookUrl
+      });
     }
   }
 
-  // Case 2: n8n is NOT connected, NOT configured, or UNREACHABLE
-  // Run deterministic policy check on the backend, and explicitly label as "n8n not connected"
-  const localEval = runBackendDeterministicEvaluation(body);
-
-  const n8nStatusLabel = webhookUrl && webhookUrl.trim() !== ''
-    ? 'n8n not connected: Upstream webhook unreachable or returned non-200 status'
-    : 'n8n not connected: No webhook endpoint configured';
-
+  // Fallback if no webhook URL is configured
   return res.json({
-    success: true,
+    success: false,
     n8nConnected: false,
     n8nStatus: 'n8n not connected',
-    source: 'backend_deterministic_fallback',
-    fallbackReason: n8nStatusLabel,
-    actionId,
-    decision: localEval.decision,
-    reason: localEval.reason,
-    evaluationSteps: localEval.steps,
-    timestamp,
-    rawN8nResponse: null
+    statusCode: 0,
+    error: 'No n8n webhook URL configured.',
+    hint: 'Configure the n8n webhook endpoint URL in the Settings or Integrations page.',
+    actionId
   });
 });
 

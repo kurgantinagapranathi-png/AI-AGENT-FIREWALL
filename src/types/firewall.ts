@@ -1,4 +1,4 @@
-export type DecisionType = 'ALLOW' | 'BLOCK' | 'REQUIRES_APPROVAL';
+export type DecisionType = 'ALLOW' | 'BLOCK' | 'REQUIRES_APPROVAL' | 'REVIEW';
 
 export type ExecutionStatus = 'PENDING' | 'EXECUTED' | 'BLOCKED' | 'REJECTED' | 'FAILED';
 
@@ -71,6 +71,16 @@ export interface ActionRecord {
   n8nStatus?: string;
   source?: 'n8n_webhook' | 'backend_deterministic_fallback' | 'local_demo';
   rawN8nResponse?: any;
+  riskScore?: number;
+  securityReasons?: string[];
+  geminiAnalysis?: string;
+  destination?: string;
+  amountInr?: number;
+  actionName?: string;
+  error?: string;
+  errorHint?: string;
+  webhookUrl?: string;
+  isTestWebhook?: boolean;
 }
 
 export interface ApprovalRequest {

@@ -117,11 +117,35 @@ CREATE POLICY "Allow authenticated read" ON firewall_actions FOR SELECT TO authe
             </div>
 
             <p className="text-xs text-slate-600 leading-relaxed mb-3">
-              Dispatches incident webhooks to your n8n workflow whenever an autonomous action is BLOCKED or requires human authorization.
+              Connects to your n8n workflow webhook to evaluate agent requests against live enterprise rules and Gemini AI analysis.
             </p>
 
             <div className="space-y-2 text-xs">
-              <label className="block font-semibold text-slate-700">Webhook Target Endpoint:</label>
+              <div className="flex items-center justify-between">
+                <label className="font-semibold text-slate-700">Webhook Target Endpoint:</label>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => {
+                      const url = 'https://bhoomikorada9.app.n8n.cloud/webhook-test/pro-firewall';
+                      setN8nUrlInput(url);
+                      setBackendN8nUrl(url);
+                    }}
+                    className="text-[10px] font-semibold text-amber-800 bg-amber-50 hover:bg-amber-100 px-2 py-0.5 rounded border border-amber-300 cursor-pointer"
+                  >
+                    Test URL
+                  </button>
+                  <button
+                    onClick={() => {
+                      const url = 'https://bhoomikorada9.app.n8n.cloud/webhook/pro-firewall';
+                      setN8nUrlInput(url);
+                      setBackendN8nUrl(url);
+                    }}
+                    className="text-[10px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300 cursor-pointer"
+                  >
+                    Prod URL
+                  </button>
+                </div>
+              </div>
               <input
                 type="text"
                 value={n8nUrlInput}
@@ -129,6 +153,11 @@ CREATE POLICY "Allow authenticated read" ON firewall_actions FOR SELECT TO authe
                 placeholder="https://your-n8n-instance/webhook/..."
                 className="w-full text-xs font-mono p-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:border-blue-500"
               />
+              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-600 space-y-1">
+                <span className="font-semibold text-slate-800 block">Workflow Readiness Tips:</span>
+                <div>• <strong>Test URL:</strong> Click <em>"Execute workflow"</em> on your n8n canvas before sending.</div>
+                <div>• <strong>Production URL:</strong> Click <em>"Activate"</em> (toggle on) in n8n for 24/7 background listening.</div>
+              </div>
             </div>
 
             {testResult && (
@@ -151,7 +180,7 @@ CREATE POLICY "Allow authenticated read" ON firewall_actions FOR SELECT TO authe
             <button
               onClick={handleTestN8n}
               disabled={testingN8n}
-              className="px-3.5 py-1.5 text-xs font-bold bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors flex items-center gap-1.5 shadow-xs"
+              className="px-3.5 py-1.5 text-xs font-bold bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
             >
               {testingN8n ? (
                 <span>Dispatching...</span>

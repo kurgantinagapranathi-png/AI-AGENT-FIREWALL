@@ -141,6 +141,72 @@ export const ActionDetailModal: React.FC = () => {
                 <div>{inspectedAction.reason}</div>
               </div>
 
+              {/* Error / Warning Alert if n8n returned error or hint */}
+              {inspectedAction.error && (
+                <div className="p-3.5 bg-rose-50 border border-rose-300 rounded-lg text-xs space-y-1 text-rose-900">
+                  <div className="flex items-center gap-1.5 font-bold text-rose-800">
+                    <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+                    <span>n8n Webhook Delivery Notice</span>
+                  </div>
+                  <div>{inspectedAction.error}</div>
+                  {inspectedAction.errorHint && (
+                    <div className="text-[11px] bg-white/70 p-2 rounded border border-rose-200 text-slate-700 font-mono mt-1">
+                      <strong>Action Required:</strong> {inspectedAction.errorHint}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Risk Score & Gemini Analysis (when provided by n8n) */}
+              {(inspectedAction.riskScore !== undefined || (inspectedAction.securityReasons && inspectedAction.securityReasons.length > 0) || inspectedAction.geminiAnalysis) && (
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-3 text-xs">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                    <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                      <Shield className="w-3.5 h-3.5 text-blue-600" />
+                      n8n AI Risk & Security Evaluation
+                    </span>
+                    {inspectedAction.riskScore !== undefined && (
+                      <span
+                        className={`font-mono font-bold px-2 py-0.5 rounded text-xs ${
+                          inspectedAction.riskScore >= 70
+                            ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                            : inspectedAction.riskScore >= 30
+                            ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                            : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                        }`}
+                      >
+                        Risk Score: {inspectedAction.riskScore} / 100
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Security Reasons */}
+                  {inspectedAction.securityReasons && inspectedAction.securityReasons.length > 0 && (
+                    <div>
+                      <span className="font-semibold text-slate-700 block mb-1">Identified Security Reasons:</span>
+                      <ul className="list-disc pl-4 space-y-0.5 text-slate-700">
+                        {inspectedAction.securityReasons.map((reason, i) => (
+                          <li key={i}>{reason}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Gemini AI Analysis */}
+                  {inspectedAction.geminiAnalysis && (
+                    <div className="pt-2 border-t border-slate-200">
+                      <div className="flex items-center gap-1.5 font-semibold text-blue-900 mb-1">
+                        <span className="w-2 h-2 rounded-full bg-blue-600" />
+                        Gemini AI Security Analysis
+                      </div>
+                      <div className="p-3 bg-white rounded border border-slate-200 text-slate-800 whitespace-pre-wrap font-sans text-xs leading-relaxed">
+                        {inspectedAction.geminiAnalysis}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Proposed action context */}
               <div className="bg-slate-50 rounded-lg p-3.5 border border-slate-200/80 text-xs space-y-2">
                 <div className="font-semibold text-slate-700 uppercase tracking-wider text-[11px]">

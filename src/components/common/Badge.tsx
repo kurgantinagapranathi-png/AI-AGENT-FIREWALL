@@ -42,6 +42,15 @@ export const DecisionBadge: React.FC<DecisionBadgeProps> = ({ decision, size = '
           <span>REQUIRES_APPROVAL</span>
         </span>
       );
+    case 'REVIEW':
+      return (
+        <span
+          className={`inline-flex items-center rounded border border-amber-300 bg-amber-50 text-amber-950 shadow-2xs ${sizeClasses[size]}`}
+        >
+          <Clock className={size === 'sm' ? 'w-3 h-3 text-amber-600' : 'w-3.5 h-3.5 text-amber-600'} />
+          <span>REVIEW</span>
+        </span>
+      );
     default:
       return null;
   }

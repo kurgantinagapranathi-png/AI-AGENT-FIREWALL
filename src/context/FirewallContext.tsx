@@ -229,6 +229,11 @@ export const FirewallProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const correlationId = `corr-${Math.random().toString(36).substr(2, 8)}`;
       const todayRefundTotal = calculateTodaySuccessfulRefunds(actions, input.agentId);
 
+      const agentId = input.agentId || input.agent_id || 'finance-agent-01';
+      const actionName = input.action || (input.actionType === 'REFUND' ? 'send_payment' : String(input.actionType || 'action').toLowerCase());
+      const destination = input.destination || input.resource || 'unknown.example';
+      const amountInr = input.amount_inr ?? input.amount ?? 0;
+
       // Send proposed action to the backend API endpoint
       let backendData: any = null;
       try {
@@ -237,6 +242,10 @@ export const FirewallProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             ...input,
+            agent_id: agentId,
+            action: actionName,
+            destination,
+            amount_inr: amountInr,
             agent: targetAgent,
             todaySuccessfulRefunds: todayRefundTotal
           })
@@ -256,6 +265,11 @@ export const FirewallProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       let n8nStatusLabel: string;
       let source: 'n8n_webhook' | 'backend_deterministic_fallback' | 'local_demo';
       const rawN8nResponse = backendData?.rawN8nResponse || null;
+      let riskScore: number | undefined = undefined;
+      let securityReasons: string[] | undefined = undefined;
+      let geminiAnalysis: string | undefined = undefined;
+      let actionError: string | undefined = undefined;
+      let actionErrorHint: string | undefined = undefined;
 
       if (backendData && backendData.success) {
         decision = backendData.decision;
@@ -264,10 +278,43 @@ export const FirewallProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         isN8nConnected = Boolean(backendData.n8nConnected);
         n8nStatusLabel = isN8nConnected ? 'Connected' : 'n8n not connected';
         source = backendData.source;
+        riskScore = backendData.riskScore;
+        securityReasons = backendData.securityReasons;
+        geminiAnalysis = backendData.geminiAnalysis;
         setBackendOnline(true);
         setN8nStatus(isN8nConnected ? 'Connected' : 'n8n not connected');
+      } else if (backendData && !backendData.success) {
+        // n8n returned an explicit error (e.g. 404 webhook not active, timeout, or non-200)
+        decision = 'BLOCK';
+        actionError = backendData.error || 'n8n webhook error';
+        actionErrorHint = backendData.hint;
+        reason = `n8n Webhook Error: ${actionError}`;
+        steps = [
+          {
+            policyId: 'N8N_CONN_FAIL',
+            policyName: 'n8n Upstream Webhook Delivery',
+            passed: false,
+            expected: 'HTTP 200 from n8n webhook',
+            actual: `Status: ${backendData.statusCode || 'Unreachable'}`,
+            reason: actionErrorHint ? `${actionError || ''} (${actionErrorHint})` : (actionError || 'Error contacting n8n webhook'),
+            decision: 'BLOCK'
+          }
+        ];
+        isN8nConnected = false;
+        n8nStatusLabel = 'n8n not connected';
+        source = 'n8n_webhook';
+        setBackendOnline(true);
+        setN8nStatus('n8n not connected');
+      } else if (input.mode === 'local_demo') {
+        const localEval = evaluateAction(input, targetAgent, policies, actions);
+        decision = localEval.decision;
+        reason = localEval.primaryReason;
+        steps = localEval.evaluationSteps;
+        isN8nConnected = false;
+        n8nStatusLabel = 'Local Sandbox Engine';
+        source = 'local_demo';
       } else {
-        // Fallback when backend is unreachable
+        // Fallback when backend is completely offline
         const localEval = evaluateAction(input, targetAgent, policies, actions);
         decision = localEval.decision;
         reason = localEval.primaryReason;
@@ -282,28 +329,31 @@ export const FirewallProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       let executionStatus: ExecutionStatus = 'PENDING';
       let approvalStatus: ApprovalStatus = 'NOT_REQUIRED';
 
-      if (decision === 'ALLOW') {
+      if (actionError) {
+        executionStatus = 'FAILED';
+        approvalStatus = 'NOT_REQUIRED';
+      } else if (decision === 'ALLOW') {
         executionStatus = 'EXECUTED';
         approvalStatus = 'NOT_REQUIRED';
       } else if (decision === 'BLOCK') {
         executionStatus = 'BLOCKED';
         approvalStatus = 'NOT_REQUIRED';
-      } else if (decision === 'REQUIRES_APPROVAL') {
+      } else if (decision === 'REQUIRES_APPROVAL' || decision === 'REVIEW') {
         executionStatus = 'PENDING'; // HALTED! Must not execute.
         approvalStatus = 'PENDING';
       }
 
       const newAction: ActionRecord = {
         id: actionId,
-        agentId: input.agentId,
-        agentName: targetAgent ? targetAgent.name : 'Unknown Agent',
+        agentId: input.agentId || input.agent_id || 'finance-agent-01',
+        agentName: targetAgent ? targetAgent.name : (input.agent_id || 'Unknown Agent'),
         actionType: input.actionType,
         resource: input.resource,
         amount: input.amount,
         requestCount: input.requestCount,
         apiRate: input.apiRate,
         targetService: input.targetService,
-        description: input.description || `${input.actionType} requested on ${input.resource}`,
+        description: input.description || `${actionName} to ${destination}`,
         timestamp,
         decision,
         reason,
@@ -315,7 +365,16 @@ export const FirewallProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         n8nConnected: isN8nConnected,
         n8nStatus: n8nStatusLabel,
         source,
-        rawN8nResponse
+        rawN8nResponse,
+        riskScore,
+        securityReasons,
+        geminiAnalysis,
+        destination,
+        amountInr,
+        actionName,
+        error: actionError,
+        errorHint: actionErrorHint,
+        webhookUrl: backendData?.webhookUrl
       };
 
       // State updates

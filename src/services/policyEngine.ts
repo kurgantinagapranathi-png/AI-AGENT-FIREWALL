@@ -16,6 +16,12 @@ export interface ProposedActionInput {
   apiRate?: number;
   targetService?: string;
   description?: string;
+  agent_id?: string;
+  action?: string;
+  destination?: string;
+  amount_inr?: number;
+  mode?: 'n8n_live' | 'local_demo';
+  webhookUrl?: string;
 }
 
 export interface PolicyEngineEvaluation {

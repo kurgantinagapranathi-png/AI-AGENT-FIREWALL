@@ -13,6 +13,15 @@ const STORAGE_KEY_PREFIX = 'ai_agent_firewall_v1_';
 
 export const INITIAL_AGENTS: Agent[] = [
   {
+    id: 'finance-agent-01',
+    name: 'Finance Agent',
+    role: 'Autonomous Payment & Treasury Controller',
+    status: 'ACTIVE',
+    allowedTools: ['payment_gateway', 'bank_transfer_api', 'vendor_ledger'],
+    department: 'Financial Security',
+    avatarColor: '#0EA5E9'
+  },
+  {
     id: 'refund-agent-01',
     name: 'Refund Assistant',
     role: 'Autonomous Customer Billing & Order Adjuster',
@@ -109,6 +118,19 @@ export const INITIAL_POLICIES: SecurityPolicy[] = [
 
 export const DEMO_SCENARIOS: ScenarioDefinition[] = [
   {
+    id: 'scenario-n8n-live',
+    scenarioLetter: '★',
+    title: 'n8n Live Test — send_payment to unknown.example (₹80,000)',
+    agentId: 'finance-agent-01',
+    actionType: 'REFUND',
+    resource: 'unknown.example',
+    amount: 80000,
+    description: 'Autonomous payment request of ₹80,000 sent to unknown.example by finance-agent-01.',
+    expectedDecision: 'BLOCK',
+    summary: 'Sends { agent_id: "finance-agent-01", action: "send_payment", destination: "unknown.example", amount_inr: 80000 } to n8n webhook.',
+    relevantPolicy: 'n8n Webhook & Gemini AI Security Policy'
+  },
+  {
     id: 'scenario-a',
     scenarioLetter: 'A',
     title: 'Scenario A — Safe Autonomous Refund',
@@ -191,7 +213,7 @@ export const DEMO_SCENARIOS: ScenarioDefinition[] = [
 export const INITIAL_INTEGRATIONS: IntegrationConfig = {
   n8n: {
     enabled: true,
-    webhookUrl: 'https://webhook.site/demo-n8n-firewall-alert',
+    webhookUrl: 'https://bhoomikorada9.app.n8n.cloud/webhook-test/pro-firewall',
     lastTested: '2026-10-09T08:30:00Z',
     lastStatus: 'SUCCESS'
   },
